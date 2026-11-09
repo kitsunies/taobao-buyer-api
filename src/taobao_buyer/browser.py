@@ -276,20 +276,29 @@ class BuyerClient:
             self._login_page = None
             return {"state": "authenticated"}
         for frame in page.frames:
-            body = await frame.locator("body").inner_text(timeout=3000)
+            try:
+                body = await frame.locator("body").inner_text(timeout=3000)
+            except BrowserError:
+                body = ""
             if any(x in body for x in ("二维码已失效", "二维码失效", "二维码已过期")):
                 return {"state": "expired"}
             if any(x in body for x in ("扫描成功", "扫码成功", "请在手机上确认")):
                 return {"state": "scanned"}
-            qr = frame.locator(".qrcode-img canvas, .qrcode-main canvas, canvas")
-            if await qr.count():
-                await qr.first.wait_for(state="visible", timeout=5000)
-                png = await qr.first.evaluate("e => e.toDataURL('image/png').split(',')[1]")
-                return {"state": "waiting", "qr_png_base64": png}
-            qr_image = frame.locator('.qrcode-img img, img[alt*="二维码"]')
-            if await qr_image.count() and await qr_image.first.is_visible():
-                png = await qr_image.first.screenshot(type="png")
-                return {"state": "waiting", "qr_png_base64": base64.b64encode(png).decode("ascii")}
+            try:
+                qr = frame.locator(".qrcode-img canvas, .qrcode-main canvas, canvas")
+                if await qr.count():
+                    await qr.first.wait_for(state="visible", timeout=5000)
+                    png = await qr.first.screenshot(type="png")
+                    return {"state": "waiting", "qr_png_base64": base64.b64encode(png).decode("ascii")}
+            except BrowserError:
+                pass
+            try:
+                qr_image = frame.locator('.qrcode-img img, img[alt*="二维码"]')
+                if await qr_image.count() and await qr_image.first.is_visible():
+                    png = await qr_image.first.screenshot(type="png", timeout=5000)
+                    return {"state": "waiting", "qr_png_base64": base64.b64encode(png).decode("ascii")}
+            except BrowserError:
+                pass
         raise SourcingError("login_layout", "The login QR could not be located.", "update_required", 502)
 
     async def login_status(self):

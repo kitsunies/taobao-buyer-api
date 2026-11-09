@@ -135,6 +135,47 @@ def test_qr_expiry(tmp_path):
     c.profile.release()
 
 
+def test_login_qr_survives_frame_body_timeout(tmp_path):
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    c = client(tmp_path)
+    element = SimpleNamespace(wait_for=AsyncMock(), screenshot=AsyncMock(return_value=b'png'))
+    canvas = SimpleNamespace(count=AsyncMock(return_value=1), first=element)
+
+    def locator(selector):
+        if selector == 'body':
+            return SimpleNamespace(inner_text=AsyncMock(side_effect=PlaywrightTimeoutError('detached')))
+        return canvas
+
+    c._login_page = SimpleNamespace(frames=[SimpleNamespace(locator=locator)])
+    c._check_page = AsyncMock()
+    c._authenticated = AsyncMock(return_value=False)
+    assert run(c._login_result()) == {'state':'waiting','qr_png_base64':'cG5n'}
+    c.profile.release()
+
+
+def test_hidden_qr_reports_layout_not_operation_failure(tmp_path):
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    c = client(tmp_path)
+    element = SimpleNamespace(wait_for=AsyncMock(side_effect=PlaywrightTimeoutError('hidden')))
+    canvas = SimpleNamespace(count=AsyncMock(return_value=1), first=element)
+    image = SimpleNamespace(count=AsyncMock(return_value=0), first=element)
+
+    def locator(selector):
+        if selector == 'body':
+            return SimpleNamespace(inner_text=AsyncMock(return_value='登录'))
+        return canvas if 'canvas' in selector else image
+
+    c._login_page = SimpleNamespace(frames=[SimpleNamespace(locator=locator)])
+    c._check_page = AsyncMock()
+    c._authenticated = AsyncMock(return_value=False)
+    with pytest.raises(SourcingError) as caught:
+        run(c._login_result())
+    assert caught.value.code == 'login_layout'
+    c.profile.release()
+
+
 def test_busy_prevents_second_operation(tmp_path):
     async def scenario():
         c = client(tmp_path)
