@@ -31,7 +31,7 @@ taobao-buyer session clear
 
 Data and structured errors go to JSON stdout. Login progress and its ASCII QR go to stderr. Scan using the Taobao app; enter `r` to refresh the QR in the same browser session, or `q` to cancel. Expiry does not trigger automatic refresh.
 
-The default profile is `~/.claude/.secrets/taobao-buyer-api/`. Override it with `taobao-buyer --profile /private/path COMMAND`. Profiles must be outside the installed source tree and owned by the process user. Directories are mode 0700 and saved browser state is mode 0600. Cookies, IndexedDB and local storage in this directory are account secrets. Session clear removes saved authentication, while preserving sourcing budgets and cooldowns. Status checks local cookie expiry; remote session revocation is detected on access.
+The default profile is `~/.claude/.secrets/taobao-buyer-api/`. Override it with `taobao-buyer --profile /private/path COMMAND`. Profiles must be outside the installed source tree and owned by the process user. Directories are mode 0700. The whole Chromium profile lives in `chrome/` so the device stays trusted between restarts; cookies, IndexedDB and local storage in this directory are account secrets. Session clear removes that profile and its saved authentication, while preserving sourcing budgets and cooldowns. Status checks local cookie expiry; remote session revocation is detected on access.
 
 ## Python
 

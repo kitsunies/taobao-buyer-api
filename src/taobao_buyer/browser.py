@@ -3,9 +3,8 @@
 import asyncio
 import base64
 from contextlib import asynccontextmanager
-import json
-import os
 from pathlib import Path
+import shutil
 import time
 from urllib.parse import quote, urlsplit
 
@@ -21,6 +20,10 @@ from .urls import canonical_product_url
 
 LOGIN_URL = "https://login.taobao.com/member/login.jhtml"
 SEARCH_URL = "https://s.taobao.com/search"
+PERSISTENT_DIR = "chrome"
+# Keep the major version in step with the Playwright image in the Dockerfile.
+DESKTOP_USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
 ALLOWED_DOMAINS = ("taobao.com", "tmall.com", "alicdn.com", "tbcdn.cn", "alipay.com",
                    "alibaba.com", "aliyuncs.com", "mmstat.com", "tanx.com")
 VERIFY_MARKERS = ("请完成验证", "滑动验证", "拖动滑块", "访问受限", "操作太频繁",
@@ -74,12 +77,7 @@ class BuyerClient:
             self.profile.acquire()
             self.policy = Policy(self.profile.path)
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=True, channel="chromium", chromium_sandbox=True,
-                args=["--disable-background-networking", "--disable-component-update",
-                      "--disable-domain-reliability", "--metrics-recording-only"],
-            )
-            await self._new_context()
+            await self._open_context()
             self.ready = True
         except BaseException as exc:
             await self.close()
@@ -88,24 +86,29 @@ class BuyerClient:
             raise SourcingError("browser_start", "Sandboxed Chromium could not start.",
                                 "configure", 503) from None
 
-    async def _new_context(self):
-        state_path = self.profile.path / "session.json"
-        state = None
-        if state_path.exists():
-            try:
-                fd = os.open(state_path, os.O_RDONLY | os.O_NOFOLLOW)
-                with os.fdopen(fd) as file:
-                    info = os.fstat(file.fileno())
-                    if info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                        raise ValueError
-                    state = json.load(file)
-            except (OSError, ValueError):
-                raise SourcingError("session_state", "Private session state is invalid.",
-                                    "clear_session", 503) from None
-        self._context = await self._browser.new_context(
-            storage_state=state, locale="zh-CN", viewport={"width": 1280, "height": 900},
-            accept_downloads=False, service_workers="block",
+    async def _open_context(self):
+        directory = self.profile.path / PERSISTENT_DIR
+        if directory.is_symlink():
+            raise SourcingError("session_state", "Private browser profile is invalid.",
+                                "clear_session", 503)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory.chmod(0o700)
+        # A hard kill can leave Chromium's singleton symlinks behind and block the next start.
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            stale = directory / name
+            if stale.is_symlink() or stale.is_file():
+                stale.unlink(missing_ok=True)
+        # The whole browser profile persists, so Taobao keeps trusting the device between
+        # restarts. Cookies alone are not enough: item pages challenge a bare context.
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            str(directory), headless=True, channel="chromium", chromium_sandbox=True,
+            args=["--disable-background-networking", "--disable-component-update",
+                  "--disable-domain-reliability", "--metrics-recording-only"],
+            locale="zh-CN", timezone_id="Australia/Sydney", user_agent=DESKTOP_USER_AGENT,
+            viewport={"width": 1280, "height": 900}, accept_downloads=False,
+            service_workers="block",
         )
+        self._browser = self._context.browser
         await self._context.route("**/*", self._route)
         self._context.on("response", self._on_response)
 
@@ -175,31 +178,11 @@ class BuyerClient:
                 self._block(error)
                 raise error
 
-    async def _save_session(self):
-        if self._context is None:
-            return
-        state = await self._context.storage_state(indexed_db=True)
-        target = self.profile.path / "session.json"
-        temporary = self.profile.path / "session.pending"
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        try:
-            with os.fdopen(fd, "w") as file:
-                os.fchmod(file.fileno(), 0o600)
-                json.dump(state, file, separators=(",", ":"))
-                file.flush()
-                os.fsync(file.fileno())
-            os.replace(temporary, target)
-        finally:
-            temporary.unlink(missing_ok=True)
-
     async def close(self):
         self.ready = False
         try:
             if self._context:
-                try:
-                    await self._save_session()
-                finally:
-                    await self._context.close()
+                await self._context.close()
         finally:
             try:
                 if self._browser:
@@ -219,15 +202,20 @@ class BuyerClient:
         async with self._operation():
             authenticated = await self._authenticated()
             return {"state": "authenticated" if authenticated else "login_required",
-                    "restored": (self.profile.path / "session.json").exists(),
+                    "restored": (self.profile.path / PERSISTENT_DIR).exists(),
                     "limits": self.policy.summary()}
 
     async def session_clear(self):
         async with self._operation():
             await self._context.close()
             self._context = self._login_page = None
-            (self.profile.path / "session.json").unlink(missing_ok=True)
-            await self._new_context()
+            directory = self.profile.path / PERSISTENT_DIR
+            if directory.is_symlink():
+                raise SourcingError("session_state", "Private browser profile is invalid.",
+                                    "clear_session", 503)
+            if directory.exists():
+                shutil.rmtree(directory)
+            await self._open_context()
             return {"state": "cleared", "limits": self.policy.summary()}
 
     @asynccontextmanager
@@ -271,7 +259,6 @@ class BuyerClient:
         page = self._login_page
         await self._check_page(page, login=True)
         if await self._authenticated():
-            await self._save_session()
             await page.close()
             self._login_page = None
             return {"state": "authenticated"}
@@ -337,7 +324,9 @@ class BuyerClient:
         selector = ('[class*="mainTitle"], [class*="MainTitle"], h1, #J_Title' if product else
                     'a[href*="item.taobao.com"],a[href*="pcdetail.taobao.com"],a[href*="detail.tmall.com"]')
         try:
-            await page.locator(selector).first.wait_for(state="visible", timeout=15000)
+            # A broad selector can match a hidden sticky-header copy first; wait for any
+            # visible match rather than the first element in DOM order.
+            await page.locator(selector + " >> visible=true").first.wait_for(state="visible", timeout=15000)
         except BrowserError:
             await self._check_page(page)
             raise SourcingError("layout_changed", "Expected product content was not found.",
@@ -364,7 +353,6 @@ class BuyerClient:
                 result = extract_product(await page.evaluate(SNAPSHOT), url)
                 if not result.get("title"):
                     raise SourcingError("layout_changed", "Product title was not found.", "update_required", 502)
-                await self._save_session()
                 return result
             finally:
                 await page.close()
@@ -377,7 +365,6 @@ class BuyerClient:
             try:
                 await self._load(page, SEARCH_URL + "?q=" + quote(text.strip()))
                 result = extract_search(await self._snapshot(page))
-                await self._save_session()
                 return result
             finally:
                 await page.close()
@@ -419,7 +406,6 @@ class BuyerClient:
                 if target == page and page.url == initial_url:
                     raise SourcingError("image_search_incomplete", "Taobao did not open image results.", "retry_manually", 502)
                 result = extract_search(await self._snapshot(target))
-                await self._save_session()
                 return result
             finally:
                 for item in list(self._context.pages):

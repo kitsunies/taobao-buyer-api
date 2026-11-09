@@ -3,7 +3,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -95,14 +95,43 @@ def test_session_state_private_and_clear_preserves_policy(tmp_path):
     async def scenario():
         c = client(tmp_path)
         c.policy.cooldown('600')
-        c._context = SimpleNamespace(storage_state=AsyncMock(return_value={'cookies':[], 'origins':[]}),
-                                     close=AsyncMock())
-        await c._save_session()
-        assert (tmp_path/'session.json').stat().st_mode & 0o777 == 0o600
-        c._new_context = AsyncMock()
+        directory = tmp_path / 'chrome'
+        directory.mkdir(mode=0o700)
+        (directory / 'Cookies').write_text('synthetic')
+        c._context = SimpleNamespace(close=AsyncMock())
+        c._open_context = AsyncMock()
         assert (await c.session_clear())['state'] == 'cleared'
-        assert not (tmp_path/'session.json').exists()
+        assert not directory.exists()
         assert Policy(tmp_path).summary()['retry_after'] >= 599
+        c.profile.release()
+    run(scenario())
+
+
+def test_persistent_profile_and_desktop_identity(tmp_path):
+    async def scenario():
+        c = client(tmp_path)
+        launch = AsyncMock(return_value=SimpleNamespace(
+            browser=SimpleNamespace(is_connected=lambda: True),
+            route=AsyncMock(), on=lambda *args: None))
+        c._playwright = SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch))
+        await c._open_context()
+        args, kwargs = launch.await_args
+        assert args[0] == str(tmp_path / 'chrome')
+        assert 'Chrome/' in kwargs['user_agent'] and 'HeadlessChrome' not in kwargs['user_agent']
+        assert kwargs['locale'] == 'zh-CN'
+        assert (tmp_path / 'chrome').stat().st_mode & 0o777 == 0o700
+        c.profile.release()
+    run(scenario())
+
+
+def test_snapshot_waits_for_a_visible_match(tmp_path):
+    async def scenario():
+        c = client(tmp_path)
+        locator = SimpleNamespace(first=SimpleNamespace(wait_for=AsyncMock()))
+        page = SimpleNamespace(locator=Mock(return_value=locator), evaluate=AsyncMock(return_value={}))
+        c._check_page = AsyncMock()
+        await c._snapshot(page, product=True)
+        assert 'visible=true' in page.locator.call_args[0][0]
         c.profile.release()
     run(scenario())
 

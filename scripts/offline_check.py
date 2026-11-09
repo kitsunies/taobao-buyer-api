@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 
 from PIL import Image
 
@@ -53,7 +54,8 @@ async def check():
         async with BuyerClient(profile) as client:
             await client._context.route('**/*', fixture)
             await client._context.add_cookies([{'name':'cookie17','value':'synthetic-only',
-                                               'domain':'.taobao.com','path':'/','secure':True}])
+                                               'domain':'.taobao.com','path':'/','secure':True,
+                                               'expires': time.time() + 3600}])
             page = await client._context.new_page()
             await page.goto('https://item.taobao.com/item.htm?id=123')
             await page.evaluate("localStorage.setItem('synthetic', 'restored')")
@@ -66,7 +68,7 @@ async def check():
             assert result['size_chart_images'] == ['https://img.alicdn.com/synthetic-chart.png']
             assert 'private' not in json.dumps(result)
             assert 'Cotton Street' not in json.dumps(result)
-        assert (profile / 'session.json').stat().st_mode & 0o777 == 0o600
+        assert (profile / 'chrome').stat().st_mode & 0o777 == 0o700
         async with BuyerClient(profile) as restored:
             await restored._context.route('**/*', fixture)
             assert (await restored.session_status())['state'] == 'authenticated'
