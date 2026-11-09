@@ -1,0 +1,13 @@
+*
+!Dockerfile
+!pyproject.toml
+!README.md
+!LICENSE
+!requirements.lock
+!src/
+!src/**
+!scripts/
+!scripts/sandbox_check.py
+!scripts/offline_check.py
+**/__pycache__
+**/*.pyc

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taobao-buyer-api"
+version = "0.1.0"
+description = "Private, owner-operated Taobao product sourcing"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "playwright==1.64.0",
+  "Pillow==13.0.0",
+  "fastapi==0.162.2",
+  "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==8.3.5", "httpx==0.28.1"]
+
+[project.scripts]
+taobao-buyer = "taobao_buyer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.firecrawl/
+.env*
+*.har
+*.trace
+*.zip
+profile/
+session.json
+token
