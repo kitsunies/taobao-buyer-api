@@ -23,7 +23,10 @@ PRODUCT = '''<!doctype html><html><head><meta charset="utf-8"></head><body>
 <img alt="尺码表" src="https://img.alicdn.com/synthetic-chart.png?tracking=private"></div>
 </body></html>'''
 SEARCH = '''<!doctype html><html><head><meta charset="utf-8"></head><body><input type="file"
-onchange="window.open('https://s.taobao.com/search?imgSearch=synthetic')"></body></html>'''
+onchange="document.querySelector('.image-search-context-wrapper').style.display='block'">
+<div class="image-search-context-wrapper" style="display:none">
+<button class="upload-button" onclick="window.location='https://s.taobao.com/search?imgSearch=synthetic'">搜索</button>
+</div></body></html>'''
 RESULTS = '''<!doctype html><html><head><meta charset="utf-8"></head><body>
 <a href="https://item.taobao.com/item.htm?id=123&amp;tracking=private"><span class="title">Synthetic tee</span>
 <span class="price">¥99</span><img src="https://img.alicdn.com/synthetic-gallery.jpg"></a>

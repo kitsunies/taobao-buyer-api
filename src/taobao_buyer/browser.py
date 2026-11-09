@@ -394,9 +394,11 @@ class BuyerClient:
                 await upload.first.wait_for(state="attached", timeout=10000)
                 await upload.first.set_input_files({"name": "reference.png" if mime == "image/png" else "reference.jpg",
                                                     "mimeType": mime, "buffer": data})
-                # Taobao may open image results in a new tab; inspect either destination.
+                # Taobao may submit automatically or wait for the preview panel's
+                # "搜索" button; some builds open results in a new tab. Handle all three.
                 target = page
-                for _ in range(30):
+                submitted = False
+                for _ in range(60):
                     await self._check_page(page)
                     new_pages = [p for p in self._context.pages if p not in before]
                     if new_pages:
@@ -404,6 +406,15 @@ class BuyerClient:
                         break
                     if page.url != initial_url:
                         break
+                    if not submitted:
+                        submit = page.locator(".image-search-context-wrapper .upload-button")
+                        try:
+                            if await submit.count() and await submit.first.is_visible():
+                                await submit.first.click(timeout=5000)
+                                submitted = True
+                                continue
+                        except BrowserError:
+                            pass
                     await page.wait_for_timeout(250)
                 if target == page and page.url == initial_url:
                     raise SourcingError("image_search_incomplete", "Taobao did not open image results.", "retry_manually", 502)
